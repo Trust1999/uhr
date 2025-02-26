@@ -1,0 +1,58 @@
+#define F_CPU 1000000UL
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+#include <avr/sleep.h>
+
+volatile uint16_t helligkeit = 128;
+
+int main(){
+
+
+
+	DDRC|=(1<<PC5);  // Setze PC5 als Ausgang (LED)
+
+	/*TCCR1A|=(1<<WGM10)|(1<<WGM11)|(1<<COM1A1)|(1<<COM1B1); // Fast PWM Mode, non-invertierend
+    TCCR1B|=(1<<WGM12)|(1<<WGM13); // Prescaler 1, Fast PWM*/
+
+	TCCR1A = (1 << WGM10) | (1 << COM1A1) | (1 << COM1B1); // 8-bit Fast PWM, Clear on Compare Match
+    TCCR1B = (1 << WGM12) | (1 << CS11); // Prescaler = 8
+    
+	OCR1AL = helligkeit;  // PWM-Startwert für OC1A setzen
+    OCR1BL = helligkeit;  // PWM-Startwert für OC1B setzen
+
+	PORTD|=(1<<PD2)|(1<<PD3);
+
+	DDRB =(1<<1)|(1<<2);	// PB1 (OC1A) und PB2 (OC1B) als Eingang setzen
+	PORTB =(1<<1)|(1<<2);		//OCA
+
+	EICRA|=(1<<ISC01)|(1<<ISC11);  // Fallende Flanke an INT0 und INT1
+    EIMSK|=(1<<INT0)|(1<<INT1);   // Externe Interrupts INT0 und INT1 aktivieren
+	
+	sei();		//Interupts aktivieren
+
+	PORTC^=(1<<PC5);
+
+	while(1){
+		asm("nop");
+	}
+
+}
+
+ISR(INT0_vect){
+	if(helligkeit < 256){
+		helligkeit=+64;
+		OCR1AL = helligkeit;  // PWM-Startwert für OC1A setzen
+    	OCR1BL = helligkeit;  // PWM-Startwert für OC1B setzen
+	}
+	_delay_ms (500);
+}
+
+ISR(INT1_vect) {
+	if(helligkeit > 0){
+		helligkeit=-64;
+		OCR1AL = helligkeit;  // PWM-Startwert für OC1A setzen
+   		OCR1BL = helligkeit;  // PWM-Startwert für OC1B setzen
+	}
+	_delay_ms (500);
+}
