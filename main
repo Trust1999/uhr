@@ -1,58 +1,100 @@
-#define F_CPU 1000000UL
+//#define F_CPU 1000000UL
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <util/delay.h>
 #include <avr/sleep.h>
 
+volatile uint16_t sekunden = 50;
+volatile uint16_t minuten = 59;
+volatile uint16_t stunden = 10;
 volatile uint16_t helligkeit = 128;
 
-int main(){
-
-
-
-	DDRC|=(1<<PC5);  // Setze PC5 als Ausgang (LED)
-
-	/*TCCR1A|=(1<<WGM10)|(1<<WGM11)|(1<<COM1A1)|(1<<COM1B1); // Fast PWM Mode, non-invertierend
-    TCCR1B|=(1<<WGM12)|(1<<WGM13); // Prescaler 1, Fast PWM*/
-
+void pwmSetzen(){
 	TCCR1A = (1 << WGM10) | (1 << COM1A1) | (1 << COM1B1); // 8-bit Fast PWM, Clear on Compare Match
     TCCR1B = (1 << WGM12) | (1 << CS11); // Prescaler = 8
     
 	OCR1AL = helligkeit;  // PWM-Startwert für OC1A setzen
     OCR1BL = helligkeit;  // PWM-Startwert für OC1B setzen
+}
 
+void registerSetzen(){
+	DDRB =(1<<PB1)|(1<<PB2);	// PB1 (OC1A) und PB2 (OC1B) als Eingang setzen
+	PORTB =(1<<PB1)|(1<<PB1);		//OCA
+
+	DDRD = (1<<7)|(1<<6)|(1<<5)|(1<<1)|(1)|(1<<PD2)|(1<<PD3);
 	PORTD|=(1<<PD2)|(1<<PD3);
 
-	DDRB =(1<<1)|(1<<2);	// PB1 (OC1A) und PB2 (OC1B) als Eingang setzen
-	PORTB =(1<<1)|(1<<2);		//OCA
+	DDRC =(1<<5)|(1<<4)|(1<<3)|(1<<2)|(1<<1)|(1);	
+}
 
+void setZeit(void) {
+    ASSR |= (1 << AS2);  // Timer2 auf asynchronen Modus mit externem Quarz setzen
+    TCCR2B |= (1 << CS22) | (1 << CS20);  // Vorteiler auf 128 setzen --> 1Hz Timer
+    TIMSK2 |= (1 << TOIE2);  // Timer2 Overflow Interrupt aktivieren
+}
+
+void setInterrupt(){
 	EICRA|=(1<<ISC01)|(1<<ISC11);  // Fallende Flanke an INT0 und INT1
     EIMSK|=(1<<INT0)|(1<<INT1);   // Externe Interrupts INT0 und INT1 aktivieren
+
+}
+
+void zeit(){
+
+	if(sekunden >= 60){
+		sekunden = 0;
+		minuten++;
+		if(minuten >= 59){
+			minuten = 0;
+			stunden++;
+			if(stunden >= 24){
+				stunden = 0;
+			}
+			PORTD = (PORTD & 0b00001100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
+		}
+		PORTC = minuten;
+	}
+
+}
+
+int main () {
+
+	setZeit();
+	pwmSetzen();
+	registerSetzen();
+	setInterrupt();
+	sei();
+
+	//set_sleep_mode(SLEEP_MODE_IDLE);
 	
-	sei();		//Interupts aktivieren
+	PORTC = minuten;
+	PORTD = (PORTD & 0b00001100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
 
-	PORTC^=(1<<PC5);
-
-	while(1){
+	while (1) {
+		zeit();
 		asm("nop");
 	}
-
 }
 
+//Timer Interupt,kommt jede Sekunde
+ISR(TIMER2_OVF_vect) {
+		sekunden++;
+}
+
+//Helligkeitseinsetllung
 ISR(INT0_vect){
-	if(helligkeit < 256){
-		helligkeit=+64;
-		OCR1AL = helligkeit;  // PWM-Startwert für OC1A setzen
-    	OCR1BL = helligkeit;  // PWM-Startwert für OC1B setzen
+
+	if(helligkeit <= 64){
+		helligkeit = 255;
 	}
-	_delay_ms (500);
+	else{
+		helligkeit-=32;
+	}
+	OCR1AL = helligkeit;  // PWM-Startwert für OC1A setzen
+    OCR1BL = helligkeit;  // PWM-Startwert für OC1B setzen
 }
 
+//sleepmodus
 ISR(INT1_vect) {
-	if(helligkeit > 0){
-		helligkeit=-64;
-		OCR1AL = helligkeit;  // PWM-Startwert für OC1A setzen
-   		OCR1BL = helligkeit;  // PWM-Startwert für OC1B setzen
-	}
-	_delay_ms (500);
+	//sleep_mode();
 }
