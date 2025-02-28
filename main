@@ -3,11 +3,14 @@
 #include <avr/interrupt.h>
 #include <util/delay.h>
 #include <avr/sleep.h>
+#include <stdbool.h>
 
+volatile uint16_t schaltSekunde;
 volatile uint16_t sekunden = 50;
 volatile uint16_t minuten = 45;
-volatile uint16_t stunden = 11;
-volatile uint16_t helligkeit = 32;
+volatile uint16_t stunden = 3;
+volatile uint16_t helligkeit = 64;
+volatile bool zeiteinstellung = false;
 
 void setZeit(void) {
     ASSR |= (1<< AS2);  // Timer2 auf asynchronen Modus mit externem Quarz setzen
@@ -38,6 +41,13 @@ void setInterrupt(){
     EIMSK|=(1<<INT0)|(1<<INT1);   // Externe Interrupts INT0 und INT1 aktivieren
 }
 
+void schlafenLegen(){
+	PORTC = 0;
+	PORTD = 0;
+	sleep_mode();
+}
+
+
 void zeit(){
 
 	if(sekunden >= 60){
@@ -49,12 +59,13 @@ void zeit(){
 			if(stunden >= 24){
 				stunden = 0;
 			}
-			PORTD = (PORTD & 0b00001100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
+			PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
 		}
 		PORTC = minuten;
 	}
 
 }
+
 
 int main () {
 
@@ -67,40 +78,78 @@ int main () {
 	//set_sleep_mode(SLEEP_MODE_PWR_DOWN);
 	
 	PORTC = minuten;
-	PORTD = (PORTD & 0b00001100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
+	PORTD|=1;
+	//PORTD = (PORTD & 0b00001100) | ((stunden & 0x1C)<<3) | (stunden & 0x03);
+
+	int zeitSchlafen = schaltSekunde + 10;
 
 	while (1){
-		if (!(PIND & (1 << PD4))) {  // Wenn PD4 LOW (Button gedrückt)
-            //schlafenLegen();
-			//PINC = 0;
-        } 
-		else 
-		{
-        	zeit();
-        };
+		zeit();
+		/*if (!(PIND & 0b00010000)) { // Wenn Taster gedrückt (LOW)
+			stunden++;  
+		    if (stunden >= 24) {
+		    	stunden = 0;
+		    }
+			PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
+		}*/
+		/*if(!zeiteinstellung){
+			//if (schaltSekunde == zeitSchlafen) {  // Wenn PD4 LOW (Button gedrückt)
+	          //  schlafenLegen();
+			zeit();
+	    } 
+		else{
+			if (!(PIND & (1 << PD4))) { // Wenn Taster gedrückt (LOW)
+				stunden++;  
+	            if (stunden >= 24) {
+	            	stunden = 0;
+	            }
+				PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
+			}
+		}*/
 	}
 }
 
 //Timer Interupt,kommt jede Sekunde
 ISR(TIMER2_OVF_vect) {
 		sekunden++;
+		schaltSekunde++;
 }
 
 //Helligkeitseinsetllung
 ISR(INT0_vect){
 
-	if(helligkeit <= 64){
-		helligkeit = 255;
+	/*if(zeiteinstellung == 1){
+		minuten++;
+		if(minuten >=60){
+			minuten = 0;
+		}
+		PORTC = minuten;
 	}
-	else{
-		helligkeit-=32;
-	}
-	OCR1AL = helligkeit;  // PWM-Startwert für OC1A setzen
-    OCR1BL = helligkeit;  // PWM-Startwert für OC1B setzen
+	else{*/
+		if(helligkeit <= 64){
+			helligkeit = 255;
+		}
+		else{
+			helligkeit-=32;
+		}
+		OCR1AL = helligkeit;  // PWM-Startwert für OC1A setzen
+	    OCR1BL = helligkeit;  // PWM-Startwert für OC1B setzen
+	//}
 }
 
-//sleepmodus
+
 ISR(INT1_vect) {
-	//set_sleep_mode(SLEEP_MODE_IDLE);
-	//sleep_mode();
+	/*if(zeiteinstellung){
+		zeiteinstellung = false;
+		sekunden = 0;
+		schaltSekunde = 0;
+	}
+	else{
+		zeiteinstellung = true;
+	}
+	stunden++;  
+	if (stunden >= 24) {
+		stunden = 0;
+	}
+	PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);*/
 }
