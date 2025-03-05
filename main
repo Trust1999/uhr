@@ -1,15 +1,22 @@
-//#define F_CPU 1000000UL
+/*//#define F_CPU 32768UL
+//#define F_CPU 100000UL
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <util/delay.h>
 #include <avr/sleep.h>
+#include <stdbool.h>
 
-volatile uint16_t sekunden = 50;
-volatile uint16_t minuten = 45;
-volatile uint16_t stunden = 11;
-volatile uint16_t helligkeit = 32;
+volatile uint16_t schaltSekunde = 55;
+volatile uint16_t sekunden = 00;
+volatile uint16_t minuten = 05;
+volatile uint16_t stunden = 12;
+volatile uint16_t helligkeit = 64;
+volatile uint16_t zeitSchlafen = 0;
+volatile bool zeiteinstellung = false;
+volatile bool aktive = true;
 
 void setZeit(void) {
+
     ASSR |= (1<< AS2);  // Timer2 auf asynchronen Modus mit externem Quarz setzen
     TCCR2B |= (1 << CS22) | (1 << CS20);  // Vorteiler auf 128 setzen --> 1Hz Timer
     TIMSK2 |= (1 << TOIE2);  // Timer2 Overflow Interrupt aktivieren
@@ -27,8 +34,10 @@ void registerSetzen(){
 	DDRB =(1<<PB1)|(1<<PB2);	// PB1 (OC1A) und PB2 (OC1B) als Eingang setzen
 	PORTB =(1<<PB1)|(1<<PB1);		//OCA
 
-	DDRD = (1<<PD7)|(1<<PD6)|(1<<PD5)|(PD1<<1)|(PD0<<1)|(1<<PD2)|(1<<PD3);
-	PORTD|=(1<<PD2)|(1<<PD3)|(1<<PD4);
+	DDRD = (1<<PD7)|(1<<PD6)|(1<<PD5)|(PD1<<1)|(1)|(1<<PD2)|(1<<PD3);
+	DDRD &= ~(1 << PD4);  // PD4 als Eingang setzen
+	PORTD|=(1<<PD2)|(1<<PD3);
+	PORTD |= (1 << PD4); 
 
 	DDRC =(1<<PC5)|(1<<PC4)|(1<<PC3)|(1<<PC2)|(1<<PC1)|(1<<PC0);	
 }
@@ -38,69 +47,171 @@ void setInterrupt(){
     EIMSK|=(1<<INT0)|(1<<INT1);   // Externe Interrupts INT0 und INT1 aktivieren
 }
 
-void zeit(){
+void zeitanpassung(){
 
+	while(schaltSekunde >= 3500){
+		sekunden++;
+		schaltSekunde-=3500;
+	}
+
+    uint16_t hinzufuegenMinuten = sekunden / 60;  // Anzahl der Minuten
+    uint16_t hinzufuegenStunden = hinzufuegenMinuten / 60;  // Anzahl der Stunden
+	
+	sekunden = sekunden % 60;  // Reset der Schlafzeit
+
+    minuten += hinzufuegenMinuten;
+    stunden += hinzufuegenStunden;
+
+    if (minuten >= 60) {
+        stunden += minuten / 60;
+        minuten = minuten % 60;
+    }
+
+    if (stunden >= 24) {
+        stunden = stunden % 24;
+    }
+
+	PORTC = minuten;
+    PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
+}
+
+
+void schlafenLegen(){
+	PORTC = 0;
+	PORTD = (PORTD & 0b00011100) | ((0 & 0x1C)<<3) | (0 & 0x03);
+	aktive = false;
+	sleep_mode();
+}
+
+void zeit(){
 	if(sekunden >= 60){
-		sekunden = 0;
+		sekunden-=60;
 		minuten++;
+
+		if(schaltSekunde >= 3500){
+			sekunden++;
+			schaltSekunde-=3500;
+		}
+
 		if(minuten >= 59){
 			minuten = 0;
 			stunden++;
 			if(stunden >= 24){
 				stunden = 0;
 			}
-			PORTD = (PORTD & 0b00001100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
+			PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
 		}
 		PORTC = minuten;
 	}
-
 }
 
-int main () {
+void stundenEinstellen(){
+	if (!(PIND & (1 << PD4))) { // Wenn Taster gedrückt (LOW)
+		stunden++;  
+		if (stunden >= 24) {
+		 	stunden = 0;
+		}
 
+		PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
+		
+		uint16_t test = sekunden;
+		while(test == sekunden){
+			asm("nop");
+		}
+	}
+	
+}
+
+void setup(){
 	setZeit();
 	pwmSetzen();
 	registerSetzen();
 	setInterrupt();
 	sei();
 
-	//set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+	set_sleep_mode(SLEEP_MODE_PWR_SAVE);
 	
 	PORTC = minuten;
-	PORTD = (PORTD & 0b00001100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
+	PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C)<<3) | (stunden & 0x03);
+}
+
+int main () {
+
+	setup();
+
+	zeitSchlafen = schaltSekunde + 10;
 
 	while (1){
-		if (!(PIND & (1 << PD4))) {  // Wenn PD4 LOW (Button gedrückt)
-            //schlafenLegen();
-			//PINC = 0;
-        } 
-		else 
-		{
-        	zeit();
-        };
+		if(aktive){
+			if(zeiteinstellung){
+				stundenEinstellen();
+			}
+			else{
+				if (schaltSekunde == zeitSchlafen) {
+		        	schlafenLegen();
+				}
+			}
+		}
+		else{
+			sleep_mode();
+		}
 	}
 }
 
 //Timer Interupt,kommt jede Sekunde
 ISR(TIMER2_OVF_vect) {
 		sekunden++;
+		schaltSekunde++;
+
+		if(aktive && (!zeiteinstellung)){
+			zeit();
+		}
 }
 
 //Helligkeitseinsetllung
 ISR(INT0_vect){
-
-	if(helligkeit <= 64){
-		helligkeit = 255;
+	if(aktive){
+		if(zeiteinstellung == 1){
+			minuten++;
+			if(minuten >=60){
+				minuten = 0;
+			}
+			PORTC = minuten;
+		}
+		else{
+			if(helligkeit <= 64){
+				helligkeit = 255;
+			}
+			else{
+				helligkeit-=32;
+			}
+			OCR1AL = helligkeit;  // PWM-Startwert für OC1A setzen
+		    OCR1BL = helligkeit;  // PWM-Startwert für OC1B setzen
+		}
 	}
 	else{
-		helligkeit-=32;
+		aktive = true;
+		zeitanpassung();
+		zeitSchlafen = schaltSekunde + 10;
 	}
-	OCR1AL = helligkeit;  // PWM-Startwert für OC1A setzen
-    OCR1BL = helligkeit;  // PWM-Startwert für OC1B setzen
 }
 
-//sleepmodus
+
 ISR(INT1_vect) {
-	//set_sleep_mode(SLEEP_MODE_IDLE);
-	//sleep_mode();
-}
+	if(aktive){
+		if(zeiteinstellung){
+			zeiteinstellung = false;
+			sekunden = 0;
+			schaltSekunde = 0;
+			zeitSchlafen = schaltSekunde + 10;
+		}
+		else{
+			zeiteinstellung = true;
+		}
+	}
+	else{
+		aktive = true;
+		zeitanpassung();
+		zeitSchlafen = schaltSekunde + 10;
+	}
+}*/
