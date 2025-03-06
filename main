@@ -1,4 +1,4 @@
-/*//#define F_CPU 32768UL
+//#define F_CPU 32768UL
 //#define F_CPU 100000UL
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -6,14 +6,15 @@
 #include <avr/sleep.h>
 #include <stdbool.h>
 
-volatile uint16_t schaltSekunde = 55;
+volatile uint16_t schaltSekunde = 0;
 volatile uint16_t sekunden = 00;
-volatile uint16_t minuten = 05;
-volatile uint16_t stunden = 12;
+volatile uint16_t minuten = 00;
+volatile uint16_t stunden = 01;
 volatile uint16_t helligkeit = 64;
 volatile uint16_t zeitSchlafen = 0;
 volatile bool zeiteinstellung = false;
 volatile bool aktive = true;
+volatile bool uhrzeitModus = true;
 
 void setZeit(void) {
 
@@ -49,9 +50,9 @@ void setInterrupt(){
 
 void zeitanpassung(){
 
-	while(schaltSekunde >= 3500){
+	while(schaltSekunde >= 41153){
 		sekunden++;
-		schaltSekunde-=3500;
+		schaltSekunde-=41153;
 	}
 
     uint16_t hinzufuegenMinuten = sekunden / 60;  // Anzahl der Minuten
@@ -88,9 +89,9 @@ void zeit(){
 		sekunden-=60;
 		minuten++;
 
-		if(schaltSekunde >= 3500){
+		if(schaltSekunde >= 41153){
 			sekunden++;
-			schaltSekunde-=3500;
+			schaltSekunde-=41153;
 		}
 
 		if(minuten >= 59){
@@ -105,6 +106,13 @@ void zeit(){
 	}
 }
 
+void warten(){
+	uint16_t test = sekunden;
+	while(test == sekunden){
+		asm("nop");
+	}
+}
+
 void stundenEinstellen(){
 	if (!(PIND & (1 << PD4))) { // Wenn Taster gedrückt (LOW)
 		stunden++;  
@@ -113,11 +121,7 @@ void stundenEinstellen(){
 		}
 
 		PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
-		
-		uint16_t test = sekunden;
-		while(test == sekunden){
-			asm("nop");
-		}
+		warten();
 	}
 	
 }
@@ -142,36 +146,46 @@ int main () {
 	zeitSchlafen = schaltSekunde + 10;
 
 	while (1){
-		if(aktive){
-			if(zeiteinstellung){
-				stundenEinstellen();
+		if(uhrzeitModus){
+			if(aktive){
+				if(zeiteinstellung){
+					stundenEinstellen();
+				}
+				else{
+					if (schaltSekunde == zeitSchlafen) {
+			        	schlafenLegen();
+					}
+				}
 			}
 			else{
-				if (schaltSekunde == zeitSchlafen) {
-		        	schlafenLegen();
-				}
+				sleep_mode();
 			}
 		}
 		else{
-			sleep_mode();
+			asm("nop");
 		}
 	}
 }
 
 //Timer Interupt,kommt jede Sekunde
 ISR(TIMER2_OVF_vect) {
-		sekunden++;
-		schaltSekunde++;
-
-		if(aktive && (!zeiteinstellung)){
+	sekunden++;
+	schaltSekunde++;
+		
+	if(aktive){
+		if(!uhrzeitModus){
+			PORTC^=(1<<PC5);
+		}
+		else if(!zeiteinstellung){
 			zeit();
 		}
+	}
 }
 
 //Helligkeitseinsetllung
 ISR(INT0_vect){
 	if(aktive){
-		if(zeiteinstellung == 1){
+		if(zeiteinstellung){
 			minuten++;
 			if(minuten >=60){
 				minuten = 0;
@@ -199,19 +213,62 @@ ISR(INT0_vect){
 
 ISR(INT1_vect) {
 	if(aktive){
-		if(zeiteinstellung){
-			zeiteinstellung = false;
-			sekunden = 0;
-			schaltSekunde = 0;
-			zeitSchlafen = schaltSekunde + 10;
+		if(uhrzeitModus){
+			if(zeiteinstellung){
+				zeiteinstellung = false;
+				sekunden = 0;
+				schaltSekunde = 0;
+				zeitSchlafen = schaltSekunde + 10;
+			}
+			else{
+				zeiteinstellung = true;
+			}
 		}
 		else{
-			zeiteinstellung = true;
+			uhrzeitModus = true;
+			zeitanpassung();
+			zeitSchlafen = schaltSekunde + 10;
 		}
 	}
 	else{
 		aktive = true;
-		zeitanpassung();
-		zeitSchlafen = schaltSekunde + 10;
+		uhrzeitModus = false;
+	}
+}
+
+/*#define F_CPU 1000000UL
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+#include <avr/sleep.h>
+#include <stdbool.h>
+
+void pwmSetzen(){
+	TCCR1A = (1 << WGM10) | (1 << COM1A1) | (1 << COM1B1); // 8-bit Fast PWM, Clear on Compare Match
+    TCCR1B = (1 << WGM12) | (1 << CS11); // Prescaler = 8
+    
+	OCR1AL = 128;  // PWM-Startwert für OC1A setzen
+    OCR1BL = 128;  // PWM-Startwert für OC1B setzen
+}
+
+void registerSetzen(){
+	DDRB =(1<<PB1)|(1<<PB2);	// PB1 (OC1A) und PB2 (OC1B) als Eingang setzen
+	PORTB =(1<<PB1)|(1<<PB1);		//OCA
+
+	DDRD = (1<<PD7)|(1<<PD6)|(1<<PD5)|(PD1<<1)|(1)|(1<<PD2)|(1<<PD3);
+	DDRD &= ~(1 << PD4);  // PD4 als Eingang setzen
+	PORTD|=(1<<PD2)|(1<<PD3);
+	PORTD |= (1 << PD4); 
+
+	DDRC =(1<<PC5)|(1<<PC4)|(1<<PC3)|(1<<PC2)|(1<<PC1)|(1<<PC0);	
+}
+
+int main(){
+	pwmSetzen();
+	registerSetzen();
+
+	while(1){
+		PORTC++;
+		_delay_ms(1000);
 	}
 }*/
