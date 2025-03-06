@@ -1,20 +1,23 @@
 //#define F_CPU 32768UL
-//#define F_CPU 100000UL
+#define F_CPU 1000000UL
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <util/delay.h>
 #include <avr/sleep.h>
 #include <stdbool.h>
+#include <avr/eeprom.h>
 
-volatile uint16_t schaltSekunde = 0;
-volatile uint16_t sekunden = 00;
-volatile uint16_t minuten = 00;
+volatile uint16_t schaltSekunde = 49995;
+volatile uint16_t sekunden = 53;
+volatile uint16_t minuten = 01;
 volatile uint16_t stunden = 01;
-volatile uint16_t helligkeit = 64;
+volatile uint16_t helligkeit = 0;
 volatile uint16_t zeitSchlafen = 0;
 volatile bool zeiteinstellung = false;
 volatile bool aktive = true;
 volatile bool uhrzeitModus = true;
+
+uint8_t EEMEM gespeicherteHelligkeit; 
 
 void setZeit(void) {
 
@@ -50,9 +53,9 @@ void setInterrupt(){
 
 void zeitanpassung(){
 
-	while(schaltSekunde >= 41153){
+	while(schaltSekunde >= 50000){
 		sekunden++;
-		schaltSekunde-=41153;
+		schaltSekunde-=50000;
 	}
 
     uint16_t hinzufuegenMinuten = sekunden / 60;  // Anzahl der Minuten
@@ -78,6 +81,12 @@ void zeitanpassung(){
 
 
 void schlafenLegen(){
+	uint16_t letzteHelligkeit = eeprom_read_byte (&gespeicherteHelligkeit);
+	
+	if (helligkeit != letzteHelligkeit) {
+        eeprom_update_byte(&gespeicherteHelligkeit, helligkeit);
+    }
+
 	PORTC = 0;
 	PORTD = (PORTD & 0b00011100) | ((0 & 0x1C)<<3) | (0 & 0x03);
 	aktive = false;
@@ -89,9 +98,14 @@ void zeit(){
 		sekunden-=60;
 		minuten++;
 
-		if(schaltSekunde >= 41153){
-			sekunden++;
-			schaltSekunde-=41153;
+		if(schaltSekunde >= 50000){
+			//sekunden++;
+			stunden++;
+			PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
+			schaltSekunde-=50000;
+			if(zeitSchlafen > schaltSekunde){
+				zeitSchlafen = schaltSekunde + 10;
+			}
 		}
 
 		if(minuten >= 59){
@@ -106,13 +120,6 @@ void zeit(){
 	}
 }
 
-void warten(){
-	uint16_t test = sekunden;
-	while(test == sekunden){
-		asm("nop");
-	}
-}
-
 void stundenEinstellen(){
 	if (!(PIND & (1 << PD4))) { // Wenn Taster gedrückt (LOW)
 		stunden++;  
@@ -121,12 +128,17 @@ void stundenEinstellen(){
 		}
 
 		PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
-		warten();
+		_delay_ms(500);
 	}
 	
 }
 
 void setup(){
+	helligkeit = eeprom_read_byte(&gespeicherteHelligkeit);  // Helligkeit aus EEPROM laden
+    if (helligkeit == 0xFF){ // Falls unbeschrieben, Standardwert setzen
+		helligkeit = 64;
+	}
+
 	setZeit();
 	pwmSetzen();
 	registerSetzen();
@@ -137,13 +149,13 @@ void setup(){
 	
 	PORTC = minuten;
 	PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C)<<3) | (stunden & 0x03);
+
+	zeitSchlafen = schaltSekunde + 10;
 }
 
 int main () {
 
 	setup();
-
-	zeitSchlafen = schaltSekunde + 10;
 
 	while (1){
 		if(uhrzeitModus){
@@ -175,6 +187,8 @@ ISR(TIMER2_OVF_vect) {
 	if(aktive){
 		if(!uhrzeitModus){
 			PORTC^=(1<<PC5);
+			_delay_ms(200);
+			PORTC = 0;
 		}
 		else if(!zeiteinstellung){
 			zeit();
@@ -208,6 +222,7 @@ ISR(INT0_vect){
 		zeitanpassung();
 		zeitSchlafen = schaltSekunde + 10;
 	}
+	_delay_ms(500);
 }
 
 
@@ -234,41 +249,5 @@ ISR(INT1_vect) {
 		aktive = true;
 		uhrzeitModus = false;
 	}
+	_delay_ms(500);
 }
-
-/*#define F_CPU 1000000UL
-#include <avr/io.h>
-#include <avr/interrupt.h>
-#include <util/delay.h>
-#include <avr/sleep.h>
-#include <stdbool.h>
-
-void pwmSetzen(){
-	TCCR1A = (1 << WGM10) | (1 << COM1A1) | (1 << COM1B1); // 8-bit Fast PWM, Clear on Compare Match
-    TCCR1B = (1 << WGM12) | (1 << CS11); // Prescaler = 8
-    
-	OCR1AL = 128;  // PWM-Startwert für OC1A setzen
-    OCR1BL = 128;  // PWM-Startwert für OC1B setzen
-}
-
-void registerSetzen(){
-	DDRB =(1<<PB1)|(1<<PB2);	// PB1 (OC1A) und PB2 (OC1B) als Eingang setzen
-	PORTB =(1<<PB1)|(1<<PB1);		//OCA
-
-	DDRD = (1<<PD7)|(1<<PD6)|(1<<PD5)|(PD1<<1)|(1)|(1<<PD2)|(1<<PD3);
-	DDRD &= ~(1 << PD4);  // PD4 als Eingang setzen
-	PORTD|=(1<<PD2)|(1<<PD3);
-	PORTD |= (1 << PD4); 
-
-	DDRC =(1<<PC5)|(1<<PC4)|(1<<PC3)|(1<<PC2)|(1<<PC1)|(1<<PC0);	
-}
-
-int main(){
-	pwmSetzen();
-	registerSetzen();
-
-	while(1){
-		PORTC++;
-		_delay_ms(1000);
-	}
-}*/
