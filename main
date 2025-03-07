@@ -1,4 +1,3 @@
-//#define F_CPU 32768UL
 #define F_CPU 1000000UL
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -7,8 +6,8 @@
 #include <stdbool.h>
 #include <avr/eeprom.h>
 
-volatile uint16_t schaltSekunde = 49995;
-volatile uint16_t sekunden = 53;
+volatile uint16_t schaltSekunde = 0;
+volatile uint16_t sekunden = 0;
 volatile uint16_t minuten = 01;
 volatile uint16_t stunden = 01;
 volatile uint16_t helligkeit = 0;
@@ -49,6 +48,9 @@ void registerSetzen(){
 void setInterrupt(){
 	EICRA|=(1<<ISC01)|(1<<ISC11);  // Fallende Flanke an INT0 und INT1
     EIMSK|=(1<<INT0)|(1<<INT1);   // Externe Interrupts INT0 und INT1 aktivieren
+
+	PCICR|=(1<<PCIE2);
+	PCMSK2|=(1<<PCINT20);
 }
 
 void zeitanpassung(){
@@ -99,8 +101,7 @@ void zeit(){
 		minuten++;
 
 		if(schaltSekunde >= 50000){
-			//sekunden++;
-			stunden++;
+			sekunden++;
 			PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
 			schaltSekunde-=50000;
 			if(zeitSchlafen > schaltSekunde){
@@ -120,23 +121,10 @@ void zeit(){
 	}
 }
 
-void stundenEinstellen(){
-	if (!(PIND & (1 << PD4))) { // Wenn Taster gedrückt (LOW)
-		stunden++;  
-		if (stunden >= 24) {
-		 	stunden = 0;
-		}
-
-		PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
-		_delay_ms(500);
-	}
-	
-}
-
 void setup(){
 	helligkeit = eeprom_read_byte(&gespeicherteHelligkeit);  // Helligkeit aus EEPROM laden
     if (helligkeit == 0xFF){ // Falls unbeschrieben, Standardwert setzen
-		helligkeit = 64;
+		helligkeit = 224;
 	}
 
 	setZeit();
@@ -158,23 +146,18 @@ int main () {
 	setup();
 
 	while (1){
-		if(uhrzeitModus){
-			if(aktive){
-				if(zeiteinstellung){
-					stundenEinstellen();
-				}
-				else{
-					if (schaltSekunde == zeitSchlafen) {
+		if(aktive){
+			if(uhrzeitModus && !zeiteinstellung){
+				if (schaltSekunde == zeitSchlafen) {
 			        	schlafenLegen();
-					}
 				}
 			}
 			else{
-				sleep_mode();
+				asm("nop");
 			}
 		}
 		else{
-			asm("nop");
+			sleep_mode();
 		}
 	}
 }
@@ -239,15 +222,44 @@ ISR(INT1_vect) {
 				zeiteinstellung = true;
 			}
 		}
-		else{
-			uhrzeitModus = true;
-			zeitanpassung();
-			zeitSchlafen = schaltSekunde + 10;
-		}
 	}
 	else{
 		aktive = true;
-		uhrzeitModus = false;
+		zeitanpassung();
+		zeitSchlafen = schaltSekunde + 10;
+		
 	}
 	_delay_ms(500);
+}
+
+ISR(PCINT2_vect){
+	if (!(PIND & (1 << PD4))) { 
+		if(aktive){
+			if(zeiteinstellung){
+				stunden++;  
+				if (stunden >= 24) {
+				 	stunden = 0;
+				}
+				PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
+			}
+			else{
+				if(uhrzeitModus){
+					uhrzeitModus = false;
+					PORTC = 0;
+					PORTD = (PORTD & 0b00011100) | ((0 & 0x1C)<<3) | (0 & 0x03);
+				}
+				else{
+					uhrzeitModus = true;
+					zeitanpassung();
+					zeitSchlafen = schaltSekunde + 10;
+				}
+			}
+		}
+		else{
+			aktive = true;
+			zeitanpassung();
+			zeitSchlafen = schaltSekunde + 10;
+		}
+		_delay_ms(500);
+	}
 }
