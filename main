@@ -7,7 +7,7 @@
 #include <avr/eeprom.h>
 
 volatile uint16_t schaltSekunde = 0;
-volatile uint16_t sekunden = 0;
+volatile uint16_t sekunden = 00;
 volatile uint16_t minuten = 01;
 volatile uint16_t stunden = 01;
 volatile uint16_t helligkeit = 0;
@@ -35,12 +35,10 @@ void pwmSetzen(){
 
 void registerSetzen(){
 	DDRB =(1<<PB1)|(1<<PB2);	// PB1 (OC1A) und PB2 (OC1B) als Eingang setzen
-	PORTB =(1<<PB1)|(1<<PB1);		//OCA
+	PORTB =(1<<PB1)|(1<<PB2);	//OCA
 
-	DDRD = (1<<PD7)|(1<<PD6)|(1<<PD5)|(PD1<<1)|(1)|(1<<PD2)|(1<<PD3);
-	DDRD &= ~(1 << PD4);  // PD4 als Eingang setzen
-	PORTD|=(1<<PD2)|(1<<PD3);
-	PORTD |= (1 << PD4); 
+	DDRD = (1<<PD7)|(1<<PD6)|(1<<PD5)|(PD1<<1)|(1)|(1<<PD2)|(1<<PD3)|(1 << PD4);
+	PORTD|=(1<<PD2)|(1<<PD3)|(1<<PD4); 
 
 	DDRC =(1<<PC5)|(1<<PC4)|(1<<PC3)|(1<<PC2)|(1<<PC1)|(1<<PC0);	
 }
@@ -60,22 +58,18 @@ void zeitanpassung(){
 		schaltSekunde-=50000;
 	}
 
-    uint16_t hinzufuegenMinuten = sekunden / 60;  // Anzahl der Minuten
-    uint16_t hinzufuegenStunden = hinzufuegenMinuten / 60;  // Anzahl der Stunden
-	
-	sekunden = sekunden % 60;  // Reset der Schlafzeit
+	while(sekunden >= 60){
+		sekunden-=60;
+		minuten++;
 
-    minuten += hinzufuegenMinuten;
-    stunden += hinzufuegenStunden;
-
-    if (minuten >= 60) {
-        stunden += minuten / 60;
-        minuten = minuten % 60;
-    }
-
-    if (stunden >= 24) {
-        stunden = stunden % 24;
-    }
+		if(minuten >= 60){
+			minuten-=60;
+			stunden++;
+			if(stunden >= 24){
+				stunden-=24;
+			}
+		}
+	}
 
 	PORTC = minuten;
     PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
@@ -102,18 +96,17 @@ void zeit(){
 
 		if(schaltSekunde >= 50000){
 			sekunden++;
-			PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
 			schaltSekunde-=50000;
 			if(zeitSchlafen > schaltSekunde){
 				zeitSchlafen = schaltSekunde + 10;
 			}
 		}
 
-		if(minuten >= 59){
-			minuten = 0;
+		if(minuten >= 60){
+			minuten-=60;
 			stunden++;
 			if(stunden >= 24){
-				stunden = 0;
+				stunden-=24;
 			}
 			PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C) << 3) | (stunden & 0x03);
 		}
@@ -135,6 +128,7 @@ void setup(){
 
 	set_sleep_mode(SLEEP_MODE_PWR_SAVE);
 	
+	zeitanpassung();
 	PORTC = minuten;
 	PORTD = (PORTD & 0b00011100) | ((stunden & 0x1C)<<3) | (stunden & 0x03);
 
@@ -144,7 +138,6 @@ void setup(){
 int main () {
 
 	setup();
-
 	while (1){
 		if(aktive){
 			if(uhrzeitModus && !zeiteinstellung){
@@ -196,6 +189,7 @@ ISR(INT0_vect){
 			else{
 				helligkeit-=32;
 			}
+			zeitSchlafen = schaltSekunde + 10;
 			OCR1AL = helligkeit;  // PWM-Startwert für OC1A setzen
 		    OCR1BL = helligkeit;  // PWM-Startwert für OC1B setzen
 		}
